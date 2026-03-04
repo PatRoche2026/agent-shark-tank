@@ -88,6 +88,48 @@ You're witty and sharp. If the numbers could work, you get excited. If they can'
 ];
 
 // ============================================================
+// SECTION 2b: EPISODE SYSTEM PROMPT
+// ============================================================
+const EPISODE_SYSTEM_PROMPT = `You are the writer and narrator of a Shark Tank episode. There are 4 Sharks:
+- 🧊 Victoria Sterling (Ice Queen): Ex-McKinsey VC. Brutal on weak TAM, no moats. Asks about margins and defensibility. Makes lowball offers with heavy equity.
+- 🔥 Marcus Chen (The Maverick): Serial entrepreneur. Loves moonshots and passion. Gets excited fast. Makes generous offers but wants board seats.
+- 🛡️ Dr. Sarah Blackwell (Risk Hawk): Former FDA regulator. Sees every failure mode. Goes out early if risk is too high. When she invests, it's a huge signal.
+- 🤑 DJ Capital (Numbers Guy): Quant trader. Only cares about unit economics, CAC, LTV. Makes offers with strict performance milestones.
+
+Write a Shark Tank episode transcript for the following pitch. Format it as a realistic TV episode with:
+1. QUESTIONS ROUND: 2-3 tough questions from different sharks (with simulated entrepreneur answers)
+2. DELIBERATION: Sharks react, debate each other, some go out with memorable one-liners
+3. OFFERS: Remaining sharks make specific offers ($X for Y% equity) or say 'I'm out' with a pointed reason
+4. FINAL VERDICT: Best offer summary or 'No Deal'
+
+Respond in this exact JSON format (no markdown, no backticks, just raw JSON):
+{
+  "episode": [
+    {"shark": "Victoria Sterling", "emoji": "🧊", "type": "question", "text": "..."},
+    {"shark": "Entrepreneur", "emoji": "🎤", "type": "answer", "text": "..."},
+    {"shark": "Marcus Chen", "emoji": "🔥", "type": "reaction", "text": "..."},
+    {"shark": "Dr. Sarah Blackwell", "emoji": "🛡️", "type": "out", "text": "I'm out. Here's why..."},
+    {"shark": "DJ Capital", "emoji": "🤑", "type": "offer", "text": "I'll give you $200K for 25%..."},
+    {"shark": "Marcus Chen", "emoji": "🔥", "type": "offer", "text": "I'll go $300K for 20%..."},
+    {"shark": "Narrator", "emoji": "🦈", "type": "verdict", "text": "DEAL: Marcus Chen - $300K for 20%"}
+  ],
+  "shark_scores": {"Victoria Sterling": 4, "Marcus Chen": 9, "Dr. Sarah Blackwell": 3, "DJ Capital": 7},
+  "best_offer": {"shark": "Marcus Chen", "amount": 300000, "equity": 20},
+  "avg_score": 6.5,
+  "sharks_in": ["Marcus Chen", "DJ Capital"],
+  "sharks_out": ["Victoria Sterling", "Dr. Sarah Blackwell"]
+}
+
+Rules:
+- Make each episode 8-15 lines. Be entertaining — the sharks should disagree, interrupt each other, and have memorable moments.
+- Some pitches should get NO offers (No Deal). For No Deal, set best_offer to null.
+- Strong pitches should trigger bidding wars between sharks.
+- shark_scores: each shark gets 1-10 based on their enthusiasm. Sharks who go "out" score 1-4. Sharks who make offers score 7-10.
+- avg_score: average of all 4 shark_scores.
+- Valid types: "question", "answer", "reaction", "out", "offer", "verdict"
+- The last line must always be type "verdict" from "Narrator"`;
+
+// ============================================================
 // SECTION 3: MAIN ASYNC FUNCTION
 // ============================================================
 async function main() {
@@ -128,6 +170,11 @@ async function main() {
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (agent_id) REFERENCES agents(id)
   )`);
+
+  // Migration: add episode_transcript column if it doesn't exist
+  try {
+    db.run("ALTER TABLE pitches ADD COLUMN episode_transcript TEXT DEFAULT NULL");
+  } catch (e) { /* column already exists — safe to ignore */ }
 
   db.run(`CREATE TABLE IF NOT EXISTS shark_reviews (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -342,7 +389,7 @@ async function main() {
   app.get('/api/pitches', (req, res) => {
     try {
       const pitches = queryAll(`
-        SELECT p.id, p.title, p.description, p.category, p.status, p.avg_score, p.created_at,
+        SELECT p.id, p.title, p.description, p.category, p.status, p.avg_score, p.episode_transcript, p.created_at,
                a.agent_name
         FROM pitches p
         JOIN agents a ON p.agent_id = a.id
@@ -358,6 +405,11 @@ async function main() {
           "SELECT a.agent_name, i.action, i.comment, i.created_at FROM investments i JOIN agents a ON i.agent_id = a.id WHERE i.pitch_id = ?",
           [pitch.id]
         );
+        // Parse episode transcript if present
+        if (pitch.episode_transcript) {
+          try { pitch.episode = JSON.parse(pitch.episode_transcript); } catch (e) { pitch.episode = null; }
+        }
+        delete pitch.episode_transcript;
       }
 
       res.json(pitches);
@@ -372,7 +424,7 @@ async function main() {
     try {
       const pitchId = parseInt(req.params.id);
       const pitches = queryAll(`
-        SELECT p.id, p.title, p.description, p.category, p.status, p.avg_score, p.created_at,
+        SELECT p.id, p.title, p.description, p.category, p.status, p.avg_score, p.episode_transcript, p.created_at,
                a.agent_name
         FROM pitches p
         JOIN agents a ON p.agent_id = a.id
@@ -392,6 +444,11 @@ async function main() {
         "SELECT a.agent_name, i.action, i.comment, i.created_at FROM investments i JOIN agents a ON i.agent_id = a.id WHERE i.pitch_id = ?",
         [pitch.id]
       );
+      // Parse episode transcript if present
+      if (pitch.episode_transcript) {
+        try { pitch.episode = JSON.parse(pitch.episode_transcript); } catch (e) { pitch.episode = null; }
+      }
+      delete pitch.episode_transcript;
 
       res.json(pitch);
     } catch (err) {
@@ -626,13 +683,9 @@ GET ${baseUrl}/api/stats
     ? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, maxRetries: 3, timeout: 30000 })
     : null;
 
-  async function runSharkReviews(pitchId, title, description, category) {
-    if (!anthropic) {
-      console.log(`[SKIP] No ANTHROPIC_API_KEY set — skipping shark reviews for pitch #${pitchId}`);
-      return;
-    }
-
-    console.log(`[SHARKS] Reviewing pitch #${pitchId}: "${title}"`);
+  // --- LEGACY FALLBACK: 4 separate API calls (used if episode generation fails) ---
+  async function runSharkReviewsLegacy(pitchId, title, description, category) {
+    console.log(`[SHARKS-LEGACY] Falling back to individual reviews for pitch #${pitchId}`);
 
     const userMessage = `Review this startup pitch:\n\nTitle: ${title}\nDescription: ${description}\nCategory: ${category}\n\nRespond in EXACTLY this JSON format (no markdown, no backticks, just raw JSON):\n{"score": <number 1-10>, "feedback": "<your review in 2-3 sentences, in character>"}`;
 
@@ -676,15 +729,9 @@ GET ${baseUrl}/api/stats
     db.run("UPDATE pitches SET avg_score = ?, status = 'reviewed' WHERE id = ?",
       [parseFloat(avgScore.toFixed(1)), pitchId]);
 
-    const sharkScores = results
-      .map(r => r.status === 'fulfilled' ? r.value : { shark: 'Unknown', score: 5 })
-      .map(r => `${r.shark.split(' ')[0]}: ${r.score}/10`)
-      .join(', ');
-
     db.run("INSERT INTO activity_log (action_type, description) VALUES (?, ?)",
-      ['review', `\u{1F988} Sharks reviewed pitch #${pitchId}: ${sharkScores}`]);
+      ['review', `\u{1F988} Sharks reviewed pitch #${pitchId} (legacy mode)`]);
 
-    // Funded bonus: avg >= 7 gives pitcher +5
     if (avgScore >= 7) {
       db.run("UPDATE agents SET score = score + 5 WHERE id = (SELECT agent_id FROM pitches WHERE id = ?)", [pitchId]);
       db.run("INSERT INTO activity_log (action_type, description) VALUES (?, ?)",
@@ -692,7 +739,94 @@ GET ${baseUrl}/api/stats
     }
 
     saveDatabase();
-    console.log(`[SHARKS] Done reviewing pitch #${pitchId}. Avg: ${avgScore.toFixed(1)}/10`);
+    console.log(`[SHARKS-LEGACY] Done reviewing pitch #${pitchId}. Avg: ${avgScore.toFixed(1)}/10`);
+  }
+
+  // --- NEW: Generate full Shark Tank episode transcript ---
+  async function runSharkReviews(pitchId, title, description, category) {
+    if (!anthropic) {
+      console.log(`[SKIP] No ANTHROPIC_API_KEY set — skipping shark reviews for pitch #${pitchId}`);
+      return;
+    }
+
+    console.log(`[SHARKS] Filming episode for pitch #${pitchId}: "${title}"`);
+
+    try {
+      const userMessage = `Pitch Title: ${title}\nPitch Description: ${description}\nCategory: ${category}`;
+
+      const response = await anthropic.messages.create({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 2000,
+        system: EPISODE_SYSTEM_PROMPT,
+        messages: [{ role: 'user', content: userMessage }],
+      });
+
+      const text = response.content[0].text.trim();
+      const cleaned = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+      const episode = JSON.parse(cleaned);
+
+      // Validate required fields
+      if (!episode.episode || !Array.isArray(episode.episode)) {
+        throw new Error('Invalid episode format: missing episode array');
+      }
+      if (typeof episode.avg_score !== 'number') {
+        throw new Error('Invalid episode format: missing avg_score');
+      }
+
+      // Store full episode transcript
+      db.run("UPDATE pitches SET episode_transcript = ? WHERE id = ?",
+        [JSON.stringify(episode), pitchId]);
+
+      // Extract per-shark scores and populate shark_reviews for backward compat
+      const sharkScores = episode.shark_scores || {};
+      for (const shark of SHARKS) {
+        const rawScore = sharkScores[shark.name];
+        const score = rawScore
+          ? Math.max(1, Math.min(10, Math.round(rawScore)))
+          : (episode.sharks_out && episode.sharks_out.includes(shark.name) ? 3 : 7);
+
+        // Concatenate this shark's lines from the episode as feedback
+        const sharkLines = episode.episode
+          .filter(line => line.shark === shark.name)
+          .map(line => line.text)
+          .join(' | ');
+        const feedback = sharkLines
+          ? `${shark.emoji} ${sharkLines}`
+          : `${shark.emoji} [No direct comments in this episode]`;
+
+        db.run(
+          "INSERT INTO shark_reviews (pitch_id, shark_name, score, feedback) VALUES (?, ?, ?, ?)",
+          [pitchId, shark.name, score, feedback]
+        );
+
+        console.log(`  ${shark.emoji} ${shark.name}: ${score}/10`);
+      }
+
+      // Update pitch status and score
+      const avgScore = parseFloat(episode.avg_score.toFixed(1));
+      db.run("UPDATE pitches SET avg_score = ?, status = 'reviewed' WHERE id = ?",
+        [avgScore, pitchId]);
+
+      // Activity log
+      const dealStatus = episode.best_offer ? 'DEAL' : 'NO DEAL';
+      db.run("INSERT INTO activity_log (action_type, description) VALUES (?, ?)",
+        ['review', `\u{1F988} Sharks filmed episode for pitch #${pitchId}! ${dealStatus} — Avg: ${avgScore}/10`]);
+
+      // Funded bonus: avg >= 7 gives pitcher +5
+      if (avgScore >= 7) {
+        db.run("UPDATE agents SET score = score + 5 WHERE id = (SELECT agent_id FROM pitches WHERE id = ?)", [pitchId]);
+        db.run("INSERT INTO activity_log (action_type, description) VALUES (?, ?)",
+          ['funded', `\u{1F3C6} Pitch #${pitchId} got FUNDED! Average score: ${avgScore}/10`]);
+      }
+
+      saveDatabase();
+      console.log(`[SHARKS] Episode complete for pitch #${pitchId}. ${dealStatus}, Avg: ${avgScore}/10`);
+
+    } catch (err) {
+      console.error(`[SHARKS] Episode generation failed for pitch #${pitchId}:`, err.message);
+      console.log(`[SHARKS] Falling back to individual reviews...`);
+      await runSharkReviewsLegacy(pitchId, title, description, category);
+    }
   }
 
   // Run seed shark reviews after startup

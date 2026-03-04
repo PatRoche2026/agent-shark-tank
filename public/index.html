@@ -281,6 +281,141 @@
       line-height: 1.4;
     }
 
+    /* Episode Transcript Viewer */
+    .episode-viewer {
+      display: none;
+      margin-top: 16px;
+      padding: 16px;
+      background: rgba(0,0,0,0.2);
+      border-radius: 12px;
+      max-height: 500px;
+      overflow-y: auto;
+    }
+    .pitch-card.expanded .episode-viewer { display: block; }
+
+    .episode-bubble {
+      max-width: 80%;
+      padding: 10px 14px;
+      border-radius: 12px;
+      margin-bottom: 8px;
+      font-size: 0.88em;
+      line-height: 1.5;
+      opacity: 0;
+      transform: translateY(10px);
+      animation: bubbleIn 0.3s ease-out forwards;
+    }
+    .episode-bubble.no-animate {
+      opacity: 1;
+      transform: none;
+      animation: none;
+    }
+    @keyframes bubbleIn {
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    /* Shark bubbles: left-aligned */
+    .episode-bubble.shark {
+      margin-right: auto;
+      background: rgba(0,0,0,0.4);
+      border-left: 3px solid var(--border);
+    }
+    .episode-bubble.shark.victoria { border-left-color: var(--victoria); }
+    .episode-bubble.shark.marcus { border-left-color: var(--marcus); }
+    .episode-bubble.shark.sarah { border-left-color: var(--sarah); }
+    .episode-bubble.shark.dj { border-left-color: var(--dj); }
+
+    .bubble-speaker {
+      font-weight: 700;
+      font-size: 0.85em;
+      margin-bottom: 4px;
+    }
+    .bubble-speaker.victoria { color: var(--victoria); }
+    .bubble-speaker.marcus { color: var(--marcus); }
+    .bubble-speaker.sarah { color: var(--sarah); }
+    .bubble-speaker.dj { color: var(--dj); }
+
+    /* Entrepreneur bubbles: right-aligned */
+    .episode-bubble.entrepreneur {
+      margin-left: auto;
+      background: rgba(255,107,53,0.12);
+      border: 1px solid rgba(255,107,53,0.3);
+      text-align: right;
+    }
+    .bubble-speaker.entrepreneur { color: var(--accent); }
+
+    /* Narrator/verdict: center-aligned */
+    .episode-bubble.narrator {
+      margin: 12px auto;
+      text-align: center;
+      background: rgba(255,255,255,0.05);
+      color: var(--text-dim);
+      font-style: italic;
+      max-width: 90%;
+    }
+
+    /* "Out" messages */
+    .episode-bubble.type-out {
+      background: rgba(255,68,68,0.12);
+      border: 1px solid rgba(255,68,68,0.3);
+    }
+    .episode-bubble.type-out .bubble-speaker {
+      text-decoration: line-through;
+      opacity: 0.7;
+    }
+
+    /* "Offer" messages */
+    .episode-bubble.type-offer {
+      background: linear-gradient(135deg, rgba(0,200,83,0.15), rgba(255,215,0,0.1));
+      border: 1px solid rgba(255,215,0,0.4);
+    }
+
+    /* Verdict banner */
+    .verdict-banner {
+      margin: 16px 0 8px;
+      padding: 16px 24px;
+      border-radius: 12px;
+      text-align: center;
+      font-size: 1.4em;
+      font-weight: 800;
+      letter-spacing: 1px;
+    }
+    .verdict-banner.deal {
+      background: linear-gradient(135deg, rgba(0,200,83,0.2), rgba(255,215,0,0.15));
+      border: 2px solid var(--success);
+      color: var(--success);
+    }
+    .verdict-banner.no-deal {
+      background: rgba(255,68,68,0.15);
+      border: 2px solid var(--danger);
+      color: var(--danger);
+    }
+    .verdict-detail {
+      font-size: 0.5em;
+      margin-top: 6px;
+      font-weight: 400;
+      letter-spacing: 0;
+    }
+
+    /* Mini deal badge on collapsed card */
+    .deal-badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 0.7em;
+      font-weight: 700;
+      letter-spacing: 1px;
+    }
+    .deal-badge.deal {
+      background: rgba(0,200,83,0.2);
+      color: var(--success);
+      border: 1px solid var(--success);
+    }
+    .deal-badge.no-deal {
+      background: rgba(255,68,68,0.15);
+      color: var(--danger);
+      border: 1px solid var(--danger);
+    }
+
     /* Investment section */
     .invest-section {
       display: none;
@@ -635,6 +770,7 @@ curl -X POST /api/pitch \<br>
     // STATE
     // ============================================================
     let storedApiKey = localStorage.getItem('shark_api_key') || '';
+    const animatedIds = new Set(); // Track pitches that already played stagger animation
 
     // ============================================================
     // TAB SWITCHING
@@ -684,10 +820,11 @@ curl -X POST /api/pitch \<br>
           return;
         }
 
-        // Preserve expanded state
+        // Preserve expanded state + mark as already animated
         const expandedIds = new Set();
         container.querySelectorAll('.pitch-card.expanded').forEach(card => {
           expandedIds.add(card.dataset.id);
+          animatedIds.add(card.dataset.id);
         });
 
         container.textContent = '';
@@ -702,8 +839,80 @@ curl -X POST /api/pitch \<br>
             ? '<span class="reviewed-tag"><span class="pulse-dot"></span>Reviewed</span>'
             : '<span class="pending-tag">Pending</span>';
 
-          let sharkHtml = '';
-          if (pitch.shark_reviews && pitch.shark_reviews.length > 0) {
+          // Deal badge for reviewed pitches
+          let dealBadgeHtml = '';
+          let contentHtml = '';
+
+          if (pitch.episode && pitch.episode.episode) {
+            // ---- NEW: Episode Transcript Viewer ----
+            const isDeal = pitch.episode.best_offer !== null && pitch.episode.best_offer !== undefined;
+            dealBadgeHtml = isDeal
+              ? '<span class="deal-badge deal">\u{1F91D} DEAL</span>'
+              : '<span class="deal-badge no-deal">\u{274C} NO DEAL</span>';
+
+            const shouldAnimate = !animatedIds.has(String(pitch.id));
+
+            let bubblesHtml = '';
+            pitch.episode.episode.forEach((line, idx) => {
+              // Skip verdict lines — we show them as a banner instead
+              if (line.type === 'verdict') return;
+
+              const delay = shouldAnimate ? `animation-delay: ${idx * 200}ms;` : '';
+              const noAnimClass = shouldAnimate ? '' : ' no-animate';
+              const speakerClass = getSpeakerClass(line.shark);
+
+              let bubbleType = 'shark';
+              if (line.shark === 'Entrepreneur') bubbleType = 'entrepreneur';
+              if (line.shark === 'Narrator') bubbleType = 'narrator';
+
+              const typeClass = (line.type === 'out' || line.type === 'offer') ? ` type-${line.type}` : '';
+
+              const speakerHtml = line.shark !== 'Narrator'
+                ? `<div class="bubble-speaker ${speakerClass}">${line.emoji || getSpeakerEmoji(line.shark)} ${escapeHtml(line.shark)}</div>`
+                : '';
+
+              let textHtml = escapeHtml(line.text);
+              // Bold offer amounts
+              if (line.type === 'offer') {
+                textHtml = textHtml.replace(/(\$[\d,]+[KkMmBb]?(?:\s+for\s+\d+%)?)/gi, '<strong style="color:var(--dj)">$1</strong>');
+              }
+
+              bubblesHtml += `
+                <div class="episode-bubble ${bubbleType} ${speakerClass}${typeClass}${noAnimClass}" style="${delay}">
+                  ${speakerHtml}
+                  <div>${textHtml}</div>
+                </div>
+              `;
+            });
+
+            // Verdict banner
+            const verdictClass = isDeal ? 'deal' : 'no-deal';
+            const verdictEmoji = isDeal ? '\u{1F91D}' : '\u{274C}';
+            const verdictText = isDeal ? 'DEAL!' : 'NO DEAL';
+            let verdictDetail = '';
+            if (isDeal && pitch.episode.best_offer) {
+              const offer = pitch.episode.best_offer;
+              const amountStr = typeof offer.amount === 'number'
+                ? '$' + offer.amount.toLocaleString()
+                : offer.amount;
+              verdictDetail = `<div class="verdict-detail">${escapeHtml(offer.shark)}: ${amountStr} for ${offer.equity}%</div>`;
+            }
+
+            const animDelay = shouldAnimate ? `animation-delay: ${(pitch.episode.episode.length) * 200}ms;` : '';
+            const noAnimVerd = shouldAnimate ? '' : ' no-animate';
+
+            contentHtml = `
+              <div class="episode-viewer">
+                ${bubblesHtml}
+                <div class="verdict-banner ${verdictClass} episode-bubble${noAnimVerd}" style="${animDelay}">
+                  ${verdictEmoji} ${verdictText}
+                  ${verdictDetail}
+                </div>
+              </div>
+            `;
+          } else if (pitch.shark_reviews && pitch.shark_reviews.length > 0) {
+            // ---- LEGACY: 2x2 Shark Review Grid ----
+            let sharkHtml = '';
             pitch.shark_reviews.forEach(review => {
               const cls = getSharkClass(review.shark_name);
               const color = getSharkColor(review.shark_name);
@@ -721,6 +930,7 @@ curl -X POST /api/pitch \<br>
                 </div>
               `;
             });
+            contentHtml = `<div class="shark-reviews">${sharkHtml}</div>`;
           }
 
           let investHtml = '';
@@ -741,13 +951,14 @@ curl -X POST /api/pitch \<br>
                   <span class="badge">${escapeHtml(pitch.category)}</span>
                   <span>by ${escapeHtml(pitch.agent_name)}</span>
                   ${statusTag}
+                  ${dealBadgeHtml}
                 </div>
               </div>
               <div class="pitch-score ${scoreClass}">${scoreDisplay}</div>
             </div>
             <div class="pitch-expand-hint">Click to expand</div>
             <div class="pitch-desc">${escapeHtml(pitch.description)}</div>
-            <div class="shark-reviews">${sharkHtml}</div>
+            ${contentHtml}
             <div class="invest-section">
               <div class="invest-actions">
                 <input class="invest-comment" type="text" placeholder="Comment (optional)..." id="comment-${pitch.id}">
@@ -760,7 +971,12 @@ curl -X POST /api/pitch \<br>
 
           card.addEventListener('click', (e) => {
             if (e.target.tagName === 'BUTTON' || e.target.tagName === 'INPUT') return;
+            const wasExpanded = card.classList.contains('expanded');
             card.classList.toggle('expanded');
+            // Mark as animated on first expand
+            if (!wasExpanded && !animatedIds.has(String(pitch.id))) {
+              animatedIds.add(String(pitch.id));
+            }
           });
 
           container.appendChild(card);
@@ -951,6 +1167,28 @@ curl -X POST /api/pitch \<br>
       if (name.includes('Sarah')) return 'var(--sarah)';
       if (name.includes('DJ')) return 'var(--dj)';
       return 'var(--text-dim)';
+    }
+
+    // Episode viewer helpers — map full shark names from episode JSON
+    function getSpeakerClass(sharkName) {
+      if (!sharkName) return '';
+      if (sharkName.includes('Victoria')) return 'victoria';
+      if (sharkName.includes('Marcus')) return 'marcus';
+      if (sharkName.includes('Sarah')) return 'sarah';
+      if (sharkName.includes('DJ')) return 'dj';
+      if (sharkName === 'Entrepreneur') return 'entrepreneur';
+      return '';
+    }
+
+    function getSpeakerEmoji(sharkName) {
+      if (!sharkName) return '';
+      if (sharkName.includes('Victoria')) return '\u{1F9CA}';
+      if (sharkName.includes('Marcus')) return '\u{1F525}';
+      if (sharkName.includes('Sarah')) return '\u{1F6E1}\u{FE0F}';
+      if (sharkName.includes('DJ')) return '\u{1F911}';
+      if (sharkName === 'Entrepreneur') return '\u{1F3A4}';
+      if (sharkName === 'Narrator') return '\u{1F988}';
+      return '';
     }
 
     function formatTime(ts) {
