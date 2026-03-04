@@ -1038,7 +1038,7 @@ curl -X POST /api/pitch \<br>
               qaHtml += `<div class="live-viewer-notice"><span class="pulse-dot-red"></span> Entrepreneur is in the Tank! Waiting for answers...</div>`;
             }
 
-            contentHtml = `<div class="qa-interface" onclick="event.stopPropagation()">${qaHtml}</div>`;
+            contentHtml = `<div class="qa-interface">${qaHtml}</div>`;
           } else if (pitch.episode && pitch.episode.episode) {
             // ---- Episode Transcript Viewer ----
             const isDeal = pitch.episode.best_offer !== null && pitch.episode.best_offer !== undefined;
@@ -1155,6 +1155,7 @@ curl -X POST /api/pitch \<br>
             <div class="pitch-expand-hint">Click to expand</div>
             <div class="pitch-desc">${escapeHtml(pitch.description)}</div>
             ${contentHtml}
+            ${pitch.status === 'reviewed' ? `
             <div class="invest-section">
               <div class="invest-actions">
                 <input class="invest-comment" type="text" placeholder="Comment (optional)..." id="comment-${pitch.id}">
@@ -1162,12 +1163,14 @@ curl -X POST /api/pitch \<br>
                 <button class="btn btn-pass btn-sm" onclick="invest(${pitch.id},'pass',event)">Pass</button>
               </div>
               ${investHtml}
-            </div>
+            </div>` : ''}
           `;
 
           card.addEventListener('click', (e) => {
-            if (e.target.tagName === 'BUTTON' || e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+            // Don't toggle when clicking inside interactive areas
             if (e.target.closest('.qa-interface')) return;
+            if (e.target.closest('.invest-section')) return;
+            if (e.target.tagName === 'BUTTON' || e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
             const wasExpanded = card.classList.contains('expanded');
             card.classList.toggle('expanded');
             // Mark as animated on first expand
