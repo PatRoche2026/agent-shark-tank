@@ -918,6 +918,7 @@ curl -X POST /api/pitch \<br>
     const animatedIds = new Set(); // Track pitches that already played stagger animation
     let fastPollInterval = null; // For 2s polling during interactive mode
     let fastPollTarget = null; // Pitch ID being polled
+    let userScrolling = false; // True while user is scrolling an episode/qa panel
 
     // ============================================================
     // TAB SWITCHING
@@ -960,12 +961,25 @@ curl -X POST /api/pitch \<br>
 
     async function loadPitches() {
       try {
+        // Skip re-render entirely if user is actively scrolling
+        if (userScrolling) return;
+
         const pitches = await fetchJSON('/api/pitches');
         const container = document.getElementById('pitchesList');
         if (pitches.length === 0) {
           container.textContent = 'No pitches yet. Be the first!';
           return;
         }
+
+        // Save scroll positions before DOM rebuild
+        const savedWindowY = window.scrollY;
+        const savedScrollTops = {};
+        container.querySelectorAll('.pitch-card.expanded').forEach(card => {
+          const ev = card.querySelector('.episode-viewer');
+          const qa = card.querySelector('.qa-interface');
+          if (ev && ev.scrollTop > 0) savedScrollTops[card.dataset.id] = { sel: '.episode-viewer', top: ev.scrollTop };
+          else if (qa && qa.scrollTop > 0) savedScrollTops[card.dataset.id] = { sel: '.qa-interface', top: qa.scrollTop };
+        });
 
         // Preserve expanded state + mark as already animated
         const expandedIds = new Set();
@@ -1180,7 +1194,30 @@ curl -X POST /api/pitch \<br>
           });
 
           container.appendChild(card);
+
+          // Track user scrolling on episode-viewer / qa-interface to prevent refresh interruption
+          ['.episode-viewer', '.qa-interface'].forEach(sel => {
+            const el = card.querySelector(sel);
+            if (!el) return;
+            const startScrolling = () => { userScrolling = true; };
+            const stopScrolling = () => { userScrolling = false; };
+            el.addEventListener('mousedown', startScrolling);
+            el.addEventListener('touchstart', startScrolling);
+            el.addEventListener('mouseup', stopScrolling);
+            el.addEventListener('mouseleave', stopScrolling);
+            el.addEventListener('touchend', stopScrolling);
+          });
+
+          // Restore inner scroll position for this card
+          const saved = savedScrollTops[String(pitch.id)];
+          if (saved) {
+            const el = card.querySelector(saved.sel);
+            if (el) el.scrollTop = saved.top;
+          }
         });
+
+        // Restore window scroll position after DOM rebuild
+        window.scrollTo(0, savedWindowY);
       } catch (e) { console.error('Pitches error:', e); }
     }
 
