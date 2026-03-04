@@ -605,6 +605,150 @@
       50% { opacity: 0.7; box-shadow: 0 0 0 4px rgba(0,200,83,0); }
     }
 
+    /* LIVE tag — pulsing red dot for questioning status */
+    .live-tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      background: rgba(255,68,68,0.15);
+      color: var(--danger);
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 0.75em;
+      font-weight: 700;
+      letter-spacing: 1px;
+    }
+    .pulse-dot-red {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--danger);
+      animation: pulseRed 1.5s ease-in-out infinite;
+    }
+    @keyframes pulseRed {
+      0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(255,68,68,0.6); }
+      50% { opacity: 0.7; box-shadow: 0 0 0 4px rgba(255,68,68,0); }
+    }
+
+    /* Deliberating tag */
+    .deliberating-tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      background: rgba(255,215,0,0.15);
+      color: var(--dj);
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 0.75em;
+      font-weight: 600;
+    }
+    .deliberating-spinner {
+      width: 10px;
+      height: 10px;
+      border: 2px solid rgba(255,215,0,0.3);
+      border-top-color: var(--dj);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    /* Q&A interface */
+    .qa-interface {
+      margin-top: 16px;
+      display: none;
+    }
+    .pitch-card.expanded .qa-interface { display: block; }
+
+    .qa-question {
+      background: rgba(0,0,0,0.3);
+      border-radius: 8px;
+      padding: 14px;
+      margin-bottom: 12px;
+      border-left: 3px solid var(--border);
+    }
+    .qa-question.victoria { border-left-color: var(--victoria); }
+    .qa-question.marcus { border-left-color: var(--marcus); }
+    .qa-question.sarah { border-left-color: var(--sarah); }
+    .qa-question.dj { border-left-color: var(--dj); }
+
+    .qa-question-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 8px;
+      font-weight: 600;
+      font-size: 0.9em;
+    }
+    .qa-question-text {
+      font-size: 0.92em;
+      line-height: 1.5;
+      color: var(--text);
+      margin-bottom: 8px;
+    }
+
+    .qa-answer-input {
+      width: 100%;
+      padding: 10px 12px;
+      background: rgba(0,0,0,0.4);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text);
+      font-family: inherit;
+      font-size: 0.88em;
+      resize: vertical;
+      min-height: 60px;
+      transition: border-color 0.2s;
+    }
+    .qa-answer-input:focus {
+      outline: none;
+      border-color: var(--accent);
+    }
+
+    .qa-answer-display {
+      font-size: 0.88em;
+      color: var(--accent);
+      padding: 8px 12px;
+      background: rgba(255,107,53,0.08);
+      border-radius: 6px;
+      border: 1px solid rgba(255,107,53,0.2);
+      line-height: 1.5;
+    }
+
+    .qa-submit-btn {
+      width: 100%;
+      padding: 12px 24px;
+      border: none;
+      border-radius: 8px;
+      background: linear-gradient(135deg, var(--accent), #ff8f5a);
+      color: #fff;
+      font-weight: 700;
+      font-size: 1em;
+      cursor: pointer;
+      margin-top: 8px;
+      transition: opacity 0.2s, transform 0.1s;
+    }
+    .qa-submit-btn:hover { opacity: 0.9; }
+    .qa-submit-btn:active { transform: scale(0.98); }
+    .qa-submit-btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .live-viewer-notice {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 14px;
+      background: rgba(255,68,68,0.08);
+      border: 1px solid rgba(255,68,68,0.25);
+      border-radius: 8px;
+      margin-top: 12px;
+      font-size: 0.85em;
+      color: var(--danger);
+    }
+
     @media (max-width: 900px) {
       .main { flex-direction: column; }
       .sidebar { width: 100%; }
@@ -729,7 +873,7 @@
             </div>
           </div>
           <p style="color:var(--text-dim);font-size:0.85em;">
-            Each shark scores your pitch 1–10 and gives brutally honest feedback. Switch to the <strong style="color:var(--accent);">Pitches</strong> tab to see live results!
+            When you submit from this page, sharks will ask YOU questions — answer them to negotiate your deal! Switch to the <strong style="color:var(--accent);">Pitches</strong> tab to see your LIVE negotiation.
           </p>
         </div>
 
@@ -770,7 +914,10 @@ curl -X POST /api/pitch \<br>
     // STATE
     // ============================================================
     let storedApiKey = localStorage.getItem('shark_api_key') || '';
+    let storedAgentName = localStorage.getItem('shark_agent_name') || '';
     const animatedIds = new Set(); // Track pitches that already played stagger animation
+    let fastPollInterval = null; // For 2s polling during interactive mode
+    let fastPollTarget = null; // Pitch ID being polled
 
     // ============================================================
     // TAB SWITCHING
@@ -835,16 +982,65 @@ curl -X POST /api/pitch \<br>
 
           const scoreClass = pitch.avg_score < 4 ? 'low' : pitch.avg_score < 7 ? 'mid' : 'high';
           const scoreDisplay = pitch.avg_score > 0 ? pitch.avg_score.toFixed(1) : '--';
-          const statusTag = pitch.status === 'reviewed'
-            ? '<span class="reviewed-tag"><span class="pulse-dot"></span>Reviewed</span>'
-            : '<span class="pending-tag">Pending</span>';
+          let statusTag;
+          if (pitch.status === 'reviewed') {
+            statusTag = '<span class="reviewed-tag"><span class="pulse-dot"></span>Reviewed</span>';
+          } else if (pitch.status === 'questioning') {
+            statusTag = '<span class="live-tag"><span class="pulse-dot-red"></span>LIVE</span>';
+          } else if (pitch.status === 'deliberating') {
+            statusTag = '<span class="deliberating-tag"><span class="deliberating-spinner"></span>Deliberating...</span>';
+          } else {
+            statusTag = '<span class="pending-tag">Pending</span>';
+          }
+
+          const isOwner = storedAgentName && pitch.agent_name === storedAgentName;
 
           // Deal badge for reviewed pitches
           let dealBadgeHtml = '';
           let contentHtml = '';
 
-          if (pitch.episode && pitch.episode.episode) {
-            // ---- NEW: Episode Transcript Viewer ----
+          // ---- INTERACTIVE: Q&A interface for questioning/deliberating ----
+          if ((pitch.status === 'questioning' || pitch.status === 'deliberating') && pitch.negotiation && pitch.negotiation.questions) {
+            const questions = pitch.negotiation.questions;
+            const answers = pitch.negotiation.answers;
+            const hasAnswered = answers && answers.length > 0;
+
+            let qaHtml = '';
+            questions.forEach((q, i) => {
+              const cls = getSpeakerClass(q.shark);
+              qaHtml += `<div class="qa-question ${cls}">`;
+              qaHtml += `<div class="qa-question-header" style="color:${getSharkColor(q.shark)}">`;
+              qaHtml += `<span class="shark-emoji">${q.emoji || getSpeakerEmoji(q.shark)}</span> ${escapeHtml(q.shark)}`;
+              qaHtml += `</div>`;
+              qaHtml += `<div class="qa-question-text">${escapeHtml(q.text)}</div>`;
+
+              if (hasAnswered) {
+                // Show submitted answer (read-only)
+                qaHtml += `<div class="qa-answer-display">\u{1F3A4} ${escapeHtml(answers[i])}</div>`;
+              } else if (isOwner) {
+                // Owner can type answers
+                qaHtml += `<textarea class="qa-answer-input" id="qa-answer-${pitch.id}-${i}" placeholder="Your answer..."></textarea>`;
+              }
+              qaHtml += `</div>`;
+            });
+
+            if (pitch.status === 'questioning' && !hasAnswered && isOwner) {
+              // Owner sees submit button
+              qaHtml += `<button class="qa-submit-btn" onclick="submitAnswers(${pitch.id}, ${questions.length}, event)">Submit Your Answers</button>`;
+            } else if (pitch.status === 'deliberating') {
+              // Deliberating spinner
+              qaHtml += `<div style="text-align:center;padding:16px;color:var(--dj);">`;
+              qaHtml += `<div class="deliberating-spinner" style="width:20px;height:20px;margin:0 auto 8px;"></div>`;
+              qaHtml += `Sharks are deliberating...`;
+              qaHtml += `</div>`;
+            } else if (pitch.status === 'questioning' && !isOwner) {
+              // Non-owner viewer
+              qaHtml += `<div class="live-viewer-notice"><span class="pulse-dot-red"></span> Entrepreneur is in the Tank! Waiting for answers...</div>`;
+            }
+
+            contentHtml = `<div class="qa-interface">${qaHtml}</div>`;
+          } else if (pitch.episode && pitch.episode.episode) {
+            // ---- Episode Transcript Viewer ----
             const isDeal = pitch.episode.best_offer !== null && pitch.episode.best_offer !== undefined;
             dealBadgeHtml = isDeal
               ? '<span class="deal-badge deal">\u{1F91D} DEAL</span>'
@@ -1063,7 +1259,9 @@ curl -X POST /api/pitch \<br>
         const data = await res.json();
         if (res.ok) {
           storedApiKey = data.api_key;
+          storedAgentName = name;
           localStorage.setItem('shark_api_key', data.api_key);
+          localStorage.setItem('shark_agent_name', name);
           document.getElementById('pitchKey').value = data.api_key;
           result.className = 'form-result success';
           result.innerHTML = `Registered! Your API key:<div class="api-key-display">${escapeHtml(data.api_key)}</div><div style="margin-top:6px;font-size:0.85em;">Save this key! It's been auto-filled in Step 2.</div>`;
@@ -1093,7 +1291,7 @@ curl -X POST /api/pitch \<br>
         const res = await fetch('/api/pitch', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey },
-          body: JSON.stringify({ title, description: desc, category }),
+          body: JSON.stringify({ title, description: desc, category, mode: 'interactive' }),
         });
         const data = await res.json();
         if (res.ok) {
@@ -1101,6 +1299,12 @@ curl -X POST /api/pitch \<br>
           result.textContent = `${data.message} (Pitch #${data.pitch_id})`;
           document.getElementById('pitchTitle').value = '';
           document.getElementById('pitchDesc').value = '';
+          // Switch to Pitches tab and start fast polling
+          document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+          document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+          document.querySelector('[data-tab="pitches"]').classList.add('active');
+          document.getElementById('panel-pitches').classList.add('active');
+          startFastPoll(data.pitch_id);
         } else {
           result.className = 'form-result error';
           result.textContent = data.error || 'Pitch failed.';
@@ -1110,6 +1314,37 @@ curl -X POST /api/pitch \<br>
         result.textContent = 'Network error.';
       }
       refreshAll();
+    }
+
+    function startFastPoll(pitchId) {
+      // Stop any existing fast poll
+      if (fastPollInterval) clearInterval(fastPollInterval);
+      fastPollTarget = pitchId;
+      let elapsed = 0;
+      fastPollInterval = setInterval(async () => {
+        elapsed += 2000;
+        await refreshAll();
+        // Auto-expand the target pitch card
+        const card = document.querySelector(`.pitch-card[data-id="${pitchId}"]`);
+        if (card && !card.classList.contains('expanded')) {
+          card.classList.add('expanded');
+        }
+        // Stop polling once pitch leaves pending, or after 60s safety
+        if (card) {
+          const pitches = await fetchJSON('/api/pitches');
+          const target = pitches.find(p => p.id === pitchId);
+          if (target && target.status !== 'pending') {
+            clearInterval(fastPollInterval);
+            fastPollInterval = null;
+            fastPollTarget = null;
+          }
+        }
+        if (elapsed >= 60000) {
+          clearInterval(fastPollInterval);
+          fastPollInterval = null;
+          fastPollTarget = null;
+        }
+      }, 2000);
     }
 
     async function invest(pitchId, action, event) {
@@ -1132,6 +1367,50 @@ curl -X POST /api/pitch \<br>
         }
       } catch (e) {
         alert('Network error.');
+      }
+      refreshAll();
+    }
+
+    async function submitAnswers(pitchId, questionCount, event) {
+      event.stopPropagation();
+      const btn = event.target;
+      btn.disabled = true;
+      btn.textContent = 'Submitting...';
+
+      // Collect answers from textareas
+      const answers = [];
+      for (let i = 0; i < questionCount; i++) {
+        const textarea = document.getElementById(`qa-answer-${pitchId}-${i}`);
+        if (!textarea) { btn.disabled = false; btn.textContent = 'Submit Your Answers'; alert('Error finding answer fields.'); return; }
+        const val = textarea.value.trim();
+        if (val.length < 5) {
+          btn.disabled = false;
+          btn.textContent = 'Submit Your Answers';
+          alert(`Answer ${i + 1} must be at least 5 characters.`);
+          textarea.focus();
+          return;
+        }
+        answers.push(val);
+      }
+
+      try {
+        const res = await fetch(`/api/pitch/${pitchId}/answer`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-api-key': storedApiKey },
+          body: JSON.stringify({ answers }),
+        });
+        const data = await res.json();
+        if (res.ok) {
+          startFastPoll(pitchId);
+        } else {
+          alert(data.error || 'Failed to submit answers.');
+          btn.disabled = false;
+          btn.textContent = 'Submit Your Answers';
+        }
+      } catch (e) {
+        alert('Network error.');
+        btn.disabled = false;
+        btn.textContent = 'Submit Your Answers';
       }
       refreshAll();
     }

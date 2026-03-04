@@ -130,6 +130,77 @@ Rules:
 - The last line must always be type "verdict" from "Narrator"`;
 
 // ============================================================
+// SECTION 2c: INTERACTIVE MODE PROMPTS
+// ============================================================
+
+// Round 1: Generate shark questions for the entrepreneur to answer
+const QUESTIONS_PROMPT = `You are the casting director of Shark Tank. There are 4 Sharks:
+- 🧊 Victoria Sterling (Ice Queen): Ex-McKinsey VC. Brutal on weak TAM, moats, margins.
+- 🔥 Marcus Chen (The Maverick): Serial entrepreneur. Loves moonshots and passion.
+- 🛡️ Dr. Sarah Blackwell (Risk Hawk): Former FDA regulator. Sees every failure mode.
+- 🤑 DJ Capital (Numbers Guy): Quant trader. Only cares about unit economics.
+
+Pick the 3 most relevant sharks for this pitch. Each shark asks 1 tough, in-character question.
+
+Respond in this exact JSON format (no markdown, no backticks, just raw JSON):
+{
+  "questions": [
+    {"shark": "Victoria Sterling", "emoji": "🧊", "text": "What's your TAM and how did you calculate it?"},
+    {"shark": "Marcus Chen", "emoji": "🔥", "text": "Where's the moonshot vision here?"},
+    {"shark": "DJ Capital", "emoji": "🤑", "text": "Walk me through your unit economics."}
+  ]
+}
+
+Rules:
+- Exactly 3 questions from 3 different sharks
+- Each question must be specific to THIS pitch (no generic questions)
+- Questions should be tough but fair — the kind that make entrepreneurs sweat
+- Keep questions to 1-2 sentences each`;
+
+// Round 2: Generate deliberation after seeing real entrepreneur answers
+const DELIBERATION_PROMPT = `You are the writer of a Shark Tank episode. There are 4 Sharks:
+- 🧊 Victoria Sterling (Ice Queen): Ex-McKinsey VC. Brutal on weak TAM, no moats. Makes lowball offers with heavy equity.
+- 🔥 Marcus Chen (The Maverick): Serial entrepreneur. Loves moonshots and passion. Makes generous offers but wants board seats.
+- 🛡️ Dr. Sarah Blackwell (Risk Hawk): Former FDA regulator. Sees every failure mode. Goes out early if risk is too high.
+- 🤑 DJ Capital (Numbers Guy): Quant trader. Only cares about unit economics. Makes offers with strict performance milestones.
+
+You are given a pitch AND a Q&A round where the entrepreneur answered real shark questions.
+Write the DELIBERATION portion of the episode based on how well the entrepreneur answered.
+
+IMPORTANT: Reference the entrepreneur's actual answers in shark reactions. For example:
+- "When you said [X], that tells me..."
+- "Your answer about [Y] was weak because..."
+- "I loved your response on [Z] — that's exactly what I needed to hear."
+
+Weak/vague answers → more sharks go out. Strong/specific answers → bidding wars.
+
+Respond in this exact JSON format (no markdown, no backticks, just raw JSON):
+{
+  "episode": [
+    {"shark": "Victoria Sterling", "emoji": "🧊", "type": "reaction", "text": "When you said X, that tells me..."},
+    {"shark": "Marcus Chen", "emoji": "🔥", "type": "reaction", "text": "I love the vision but..."},
+    {"shark": "Dr. Sarah Blackwell", "emoji": "🛡️", "type": "out", "text": "I'm out. Your answer about risk was..."},
+    {"shark": "DJ Capital", "emoji": "🤑", "type": "offer", "text": "I'll give you $200K for 25%..."},
+    {"shark": "Marcus Chen", "emoji": "🔥", "type": "offer", "text": "I'll go $300K for 20%..."},
+    {"shark": "Narrator", "emoji": "🦈", "type": "verdict", "text": "DEAL: Marcus Chen - $300K for 20%"}
+  ],
+  "shark_scores": {"Victoria Sterling": 4, "Marcus Chen": 9, "Dr. Sarah Blackwell": 3, "DJ Capital": 7},
+  "best_offer": {"shark": "Marcus Chen", "amount": 300000, "equity": 20},
+  "avg_score": 6.5,
+  "sharks_in": ["Marcus Chen", "DJ Capital"],
+  "sharks_out": ["Victoria Sterling", "Dr. Sarah Blackwell"]
+}
+
+Rules:
+- 6-12 lines of deliberation. Be entertaining — sharks disagree, interrupt, have memorable moments.
+- ALL 4 sharks must react, even if only 3 asked questions. The 4th shark watched and has an opinion.
+- Some pitches should get NO offers (No Deal). For No Deal, set best_offer to null.
+- Strong answers should trigger bidding wars. Weak answers → sharks pile on and go out.
+- shark_scores: 1-10 based on enthusiasm. Sharks who go "out" score 1-4. Offers = 7-10.
+- Valid types: "reaction", "out", "offer", "verdict"
+- The last line must always be type "verdict" from "Narrator"`;
+
+// ============================================================
 // SECTION 3: MAIN ASYNC FUNCTION
 // ============================================================
 async function main() {
@@ -175,6 +246,14 @@ async function main() {
   try {
     db.run("ALTER TABLE pitches ADD COLUMN episode_transcript TEXT DEFAULT NULL");
   } catch (e) { /* column already exists — safe to ignore */ }
+
+  // Migration: add negotiation columns for interactive mode
+  try {
+    db.run("ALTER TABLE pitches ADD COLUMN negotiation_state TEXT DEFAULT NULL");
+  } catch (e) { /* column already exists */ }
+  try {
+    db.run("ALTER TABLE pitches ADD COLUMN entrepreneur_mode TEXT DEFAULT 'bot'");
+  } catch (e) { /* column already exists */ }
 
   db.run(`CREATE TABLE IF NOT EXISTS shark_reviews (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -389,7 +468,8 @@ async function main() {
   app.get('/api/pitches', (req, res) => {
     try {
       const pitches = queryAll(`
-        SELECT p.id, p.title, p.description, p.category, p.status, p.avg_score, p.episode_transcript, p.created_at,
+        SELECT p.id, p.title, p.description, p.category, p.status, p.avg_score, p.episode_transcript,
+               p.negotiation_state, p.entrepreneur_mode, p.created_at,
                a.agent_name
         FROM pitches p
         JOIN agents a ON p.agent_id = a.id
@@ -410,6 +490,11 @@ async function main() {
           try { pitch.episode = JSON.parse(pitch.episode_transcript); } catch (e) { pitch.episode = null; }
         }
         delete pitch.episode_transcript;
+        // Parse negotiation state if present
+        if (pitch.negotiation_state) {
+          try { pitch.negotiation = JSON.parse(pitch.negotiation_state); } catch (e) { pitch.negotiation = null; }
+        }
+        delete pitch.negotiation_state;
       }
 
       res.json(pitches);
@@ -424,7 +509,8 @@ async function main() {
     try {
       const pitchId = parseInt(req.params.id);
       const pitches = queryAll(`
-        SELECT p.id, p.title, p.description, p.category, p.status, p.avg_score, p.episode_transcript, p.created_at,
+        SELECT p.id, p.title, p.description, p.category, p.status, p.avg_score, p.episode_transcript,
+               p.negotiation_state, p.entrepreneur_mode, p.created_at,
                a.agent_name
         FROM pitches p
         JOIN agents a ON p.agent_id = a.id
@@ -449,6 +535,11 @@ async function main() {
         try { pitch.episode = JSON.parse(pitch.episode_transcript); } catch (e) { pitch.episode = null; }
       }
       delete pitch.episode_transcript;
+      // Parse negotiation state if present
+      if (pitch.negotiation_state) {
+        try { pitch.negotiation = JSON.parse(pitch.negotiation_state); } catch (e) { pitch.negotiation = null; }
+      }
+      delete pitch.negotiation_state;
 
       res.json(pitch);
     } catch (err) {
@@ -572,7 +663,7 @@ GET ${baseUrl}/api/stats
   // Submit pitch
   app.post('/api/pitch', requireAuth, (req, res) => {
     try {
-      const { title, description, category } = req.body;
+      const { title, description, category, mode } = req.body;
       if (!title || !description) {
         return res.status(400).json({ error: 'title and description are required' });
       }
@@ -588,8 +679,11 @@ GET ${baseUrl}/api/stats
         return res.status(429).json({ error: 'Rate limit exceeded. Max 10 pitches per hour.' });
       }
 
-      db.run("INSERT INTO pitches (agent_id, title, description, category) VALUES (?, ?, ?, ?)",
-        [req.agent.id, title, description, category || 'general']);
+      const isInteractive = mode === 'interactive';
+      const entrepreneurMode = isInteractive ? 'human' : 'bot';
+
+      db.run("INSERT INTO pitches (agent_id, title, description, category, entrepreneur_mode) VALUES (?, ?, ?, ?, ?)",
+        [req.agent.id, title, description, category || 'general', entrepreneurMode]);
 
       const pitchId = db.exec("SELECT last_insert_rowid()")[0].values[0][0];
 
@@ -598,16 +692,29 @@ GET ${baseUrl}/api/stats
 
       saveDatabase();
 
-      // Fire shark reviews asynchronously (Phase 2 — stub for now)
-      runSharkReviews(pitchId, title, description, category || 'general').catch(err => {
-        console.error('Shark review pipeline failed:', err.message);
-      });
-
-      res.status(201).json({
-        pitch_id: pitchId,
-        title,
-        message: 'Pitch submitted! The Sharks are reviewing...'
-      });
+      if (isInteractive) {
+        // Interactive mode: generate questions for human to answer
+        generateQuestions(pitchId, title, description, category || 'general').catch(err => {
+          console.error('Question generation failed:', err.message);
+        });
+        res.status(201).json({
+          pitch_id: pitchId,
+          title,
+          mode: 'interactive',
+          message: 'Pitch submitted! The Sharks are preparing their questions...'
+        });
+      } else {
+        // Bot mode: full auto-episode (existing behavior)
+        runSharkReviews(pitchId, title, description, category || 'general').catch(err => {
+          console.error('Shark review pipeline failed:', err.message);
+        });
+        res.status(201).json({
+          pitch_id: pitchId,
+          title,
+          mode: 'bot',
+          message: 'Pitch submitted! The Sharks are reviewing...'
+        });
+      }
     } catch (err) {
       console.error('Pitch error:', err.message);
       res.status(500).json({ error: 'Internal server error' });
@@ -672,6 +779,71 @@ GET ${baseUrl}/api/stats
       });
     } catch (err) {
       console.error('Invest error:', err.message);
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Submit answers to shark questions (interactive mode)
+  app.post('/api/pitch/:id/answer', requireAuth, (req, res) => {
+    try {
+      const pitchId = parseInt(req.params.id);
+      const { answers } = req.body;
+
+      // Load pitch
+      const pitches = queryAll("SELECT * FROM pitches WHERE id = ?", [pitchId]);
+      if (pitches.length === 0) {
+        return res.status(404).json({ error: 'Pitch not found' });
+      }
+      const pitch = pitches[0];
+
+      // Auth: must be pitch owner
+      if (pitch.agent_id !== req.agent.id) {
+        return res.status(403).json({ error: 'Only the pitch owner can answer questions' });
+      }
+
+      // State guard: must be in questioning status
+      if (pitch.status !== 'questioning') {
+        return res.status(400).json({ error: `Pitch is in "${pitch.status}" state, not "questioning"` });
+      }
+
+      // Parse negotiation state to get questions
+      const negState = JSON.parse(pitch.negotiation_state || '{}');
+      if (!negState.questions) {
+        return res.status(400).json({ error: 'No questions found for this pitch' });
+      }
+
+      // Validate answers
+      if (!Array.isArray(answers) || answers.length !== negState.questions.length) {
+        return res.status(400).json({ error: `Expected ${negState.questions.length} answers, got ${answers ? answers.length : 0}` });
+      }
+      for (let i = 0; i < answers.length; i++) {
+        if (typeof answers[i] !== 'string' || answers[i].trim().length < 5) {
+          return res.status(400).json({ error: `Answer ${i + 1} must be at least 5 characters` });
+        }
+      }
+
+      // Store answers and transition to deliberating
+      const trimmedAnswers = answers.map(a => a.trim());
+      negState.answers = trimmedAnswers;
+      db.run("UPDATE pitches SET negotiation_state = ?, status = 'deliberating' WHERE id = ?",
+        [JSON.stringify(negState), pitchId]);
+
+      db.run("INSERT INTO activity_log (action_type, description) VALUES (?, ?)",
+        ['answer', `\u{1F3A4} Entrepreneur answered shark questions for pitch #${pitchId}!`]);
+
+      saveDatabase();
+
+      // Fire deliberation asynchronously
+      runDeliberation(pitchId).catch(err => {
+        console.error('Deliberation failed:', err.message);
+      });
+
+      res.json({
+        pitch_id: pitchId,
+        message: 'Answers submitted! The Sharks are deliberating...'
+      });
+    } catch (err) {
+      console.error('Answer error:', err.message);
       res.status(500).json({ error: 'Internal server error' });
     }
   });
@@ -827,6 +999,195 @@ GET ${baseUrl}/api/stats
       console.log(`[SHARKS] Falling back to individual reviews...`);
       await runSharkReviewsLegacy(pitchId, title, description, category);
     }
+  }
+
+  // --- INTERACTIVE MODE: Generate shark questions (Round 1) ---
+  async function generateQuestions(pitchId, title, description, category) {
+    if (!anthropic) {
+      console.log(`[SKIP] No ANTHROPIC_API_KEY — skipping questions for pitch #${pitchId}`);
+      return;
+    }
+
+    console.log(`[QUESTIONS] Generating shark questions for pitch #${pitchId}: "${title}"`);
+
+    try {
+      const userMessage = `Pitch Title: ${title}\nPitch Description: ${description}\nCategory: ${category}`;
+
+      const response = await anthropic.messages.create({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 500,
+        system: QUESTIONS_PROMPT,
+        messages: [{ role: 'user', content: userMessage }],
+      });
+
+      const text = response.content[0].text.trim();
+      const cleaned = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+      const parsed = JSON.parse(cleaned);
+
+      if (!parsed.questions || !Array.isArray(parsed.questions) || parsed.questions.length === 0) {
+        throw new Error('Invalid questions format');
+      }
+
+      // Store questions in negotiation_state, set status to questioning
+      const state = { questions: parsed.questions };
+      db.run("UPDATE pitches SET negotiation_state = ?, status = 'questioning' WHERE id = ?",
+        [JSON.stringify(state), pitchId]);
+
+      db.run("INSERT INTO activity_log (action_type, description) VALUES (?, ?)",
+        ['questions', `\u{1F3AC} Sharks have questions for pitch #${pitchId}!`]);
+
+      saveDatabase();
+      console.log(`[QUESTIONS] ${parsed.questions.length} questions ready for pitch #${pitchId}`);
+
+    } catch (err) {
+      console.error(`[QUESTIONS] Failed for pitch #${pitchId}:`, err.message);
+      console.log(`[QUESTIONS] Falling back to auto-episode...`);
+      await runSharkReviews(pitchId, title, description, category);
+    }
+  }
+
+  // --- INTERACTIVE MODE: Run deliberation after entrepreneur answers (Round 2) ---
+  async function runDeliberation(pitchId) {
+    if (!anthropic) return;
+
+    console.log(`[DELIBERATION] Sharks deliberating on pitch #${pitchId}...`);
+
+    try {
+      // Load pitch + negotiation state
+      const pitches = queryAll(
+        "SELECT p.*, a.agent_name FROM pitches p JOIN agents a ON p.agent_id = a.id WHERE p.id = ?",
+        [pitchId]
+      );
+      if (pitches.length === 0) throw new Error('Pitch not found');
+      const pitch = pitches[0];
+
+      const negState = JSON.parse(pitch.negotiation_state || '{}');
+      if (!negState.questions || !negState.answers) throw new Error('Missing Q&A data');
+
+      // Build Q&A context for Claude
+      let qaContext = '';
+      negState.questions.forEach((q, i) => {
+        qaContext += `\n${q.emoji} ${q.shark} asks: "${q.text}"`;
+        qaContext += `\n🎤 Entrepreneur answers: "${negState.answers[i]}"`;
+      });
+
+      const userMessage = `Pitch Title: ${pitch.title}
+Pitch Description: ${pitch.description}
+Category: ${pitch.category}
+
+== Q&A ROUND (real entrepreneur answers) ==
+${qaContext}
+
+Now write the deliberation. React to the entrepreneur's ACTUAL answers above.`;
+
+      const response = await anthropic.messages.create({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 2000,
+        system: DELIBERATION_PROMPT,
+        messages: [{ role: 'user', content: userMessage }],
+      });
+
+      const text = response.content[0].text.trim();
+      const cleaned = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+      const deliberation = JSON.parse(cleaned);
+
+      if (!deliberation.episode || !Array.isArray(deliberation.episode)) {
+        throw new Error('Invalid deliberation format');
+      }
+
+      // Build full episode merging Q&A + deliberation
+      const fullEpisode = buildFullEpisode(negState.questions, negState.answers, deliberation);
+
+      // Store full episode transcript
+      db.run("UPDATE pitches SET episode_transcript = ? WHERE id = ?",
+        [JSON.stringify(fullEpisode), pitchId]);
+
+      // Populate shark_reviews for backward compat
+      const sharkScores = fullEpisode.shark_scores || {};
+      for (const shark of SHARKS) {
+        const rawScore = sharkScores[shark.name];
+        const score = rawScore
+          ? Math.max(1, Math.min(10, Math.round(rawScore)))
+          : (fullEpisode.sharks_out && fullEpisode.sharks_out.includes(shark.name) ? 3 : 7);
+
+        const sharkLines = fullEpisode.episode
+          .filter(line => line.shark === shark.name)
+          .map(line => line.text)
+          .join(' | ');
+        const feedback = sharkLines
+          ? `${shark.emoji} ${sharkLines}`
+          : `${shark.emoji} [No direct comments in this episode]`;
+
+        db.run(
+          "INSERT INTO shark_reviews (pitch_id, shark_name, score, feedback) VALUES (?, ?, ?, ?)",
+          [pitchId, shark.name, score, feedback]
+        );
+        console.log(`  ${shark.emoji} ${shark.name}: ${score}/10`);
+      }
+
+      // Update status and scores
+      const avgScore = parseFloat(fullEpisode.avg_score.toFixed(1));
+      db.run("UPDATE pitches SET avg_score = ?, status = 'reviewed' WHERE id = ?",
+        [avgScore, pitchId]);
+
+      const dealStatus = fullEpisode.best_offer ? 'DEAL' : 'NO DEAL';
+      db.run("INSERT INTO activity_log (action_type, description) VALUES (?, ?)",
+        ['review', `\u{1F988} Interactive episode complete for pitch #${pitchId}! ${dealStatus} — Avg: ${avgScore}/10`]);
+
+      if (avgScore >= 7) {
+        db.run("UPDATE agents SET score = score + 5 WHERE id = (SELECT agent_id FROM pitches WHERE id = ?)", [pitchId]);
+        db.run("INSERT INTO activity_log (action_type, description) VALUES (?, ?)",
+          ['funded', `\u{1F3C6} Pitch #${pitchId} got FUNDED! Average score: ${avgScore}/10`]);
+      }
+
+      saveDatabase();
+      console.log(`[DELIBERATION] Episode complete for pitch #${pitchId}. ${dealStatus}, Avg: ${avgScore}/10`);
+
+    } catch (err) {
+      console.error(`[DELIBERATION] Failed for pitch #${pitchId}:`, err.message);
+      // Fallback: load pitch info and run auto-episode
+      const pitches = queryAll("SELECT title, description, category FROM pitches WHERE id = ?", [pitchId]);
+      if (pitches.length > 0) {
+        const p = pitches[0];
+        await runSharkReviews(pitchId, p.title, p.description, p.category);
+      }
+    }
+  }
+
+  // --- Build merged episode from Q&A round + deliberation ---
+  function buildFullEpisode(questions, answers, deliberation) {
+    const episode = [];
+
+    // Add Q&A round
+    questions.forEach((q, i) => {
+      episode.push({
+        shark: q.shark,
+        emoji: q.emoji,
+        type: 'question',
+        text: q.text
+      });
+      episode.push({
+        shark: 'Entrepreneur',
+        emoji: '\u{1F3A4}',
+        type: 'answer',
+        text: answers[i]
+      });
+    });
+
+    // Add deliberation lines
+    deliberation.episode.forEach(line => {
+      episode.push(line);
+    });
+
+    return {
+      episode,
+      shark_scores: deliberation.shark_scores,
+      best_offer: deliberation.best_offer,
+      avg_score: deliberation.avg_score,
+      sharks_in: deliberation.sharks_in,
+      sharks_out: deliberation.sharks_out,
+      interactive: true
+    };
   }
 
   // Run seed shark reviews after startup
