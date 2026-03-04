@@ -1038,7 +1038,7 @@ curl -X POST /api/pitch \<br>
               qaHtml += `<div class="live-viewer-notice"><span class="pulse-dot-red"></span> Entrepreneur is in the Tank! Waiting for answers...</div>`;
             }
 
-            contentHtml = `<div class="qa-interface">${qaHtml}</div>`;
+            contentHtml = `<div class="qa-interface" onclick="event.stopPropagation()">${qaHtml}</div>`;
           } else if (pitch.episode && pitch.episode.episode) {
             // ---- Episode Transcript Viewer ----
             const isDeal = pitch.episode.best_offer !== null && pitch.episode.best_offer !== undefined;
@@ -1166,7 +1166,8 @@ curl -X POST /api/pitch \<br>
           `;
 
           card.addEventListener('click', (e) => {
-            if (e.target.tagName === 'BUTTON' || e.target.tagName === 'INPUT') return;
+            if (e.target.tagName === 'BUTTON' || e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+            if (e.target.closest('.qa-interface')) return;
             const wasExpanded = card.classList.contains('expanded');
             card.classList.toggle('expanded');
             // Mark as animated on first expand
@@ -1412,7 +1413,7 @@ curl -X POST /api/pitch \<br>
         btn.disabled = false;
         btn.textContent = 'Submit Your Answers';
       }
-      refreshAll();
+      refreshAll(true);
     }
 
     // ============================================================
@@ -1484,8 +1485,21 @@ curl -X POST /api/pitch \<br>
     // ============================================================
     // REFRESH LOOP
     // ============================================================
-    function refreshAll() {
+    function refreshAll(force) {
       loadStats();
+      // Don't rebuild pitch cards while user is typing Q&A answers
+      if (!force) {
+        const qaInputs = document.querySelectorAll('.qa-answer-input');
+        if (qaInputs.length > 0) {
+          const hasFocus = document.activeElement && document.activeElement.classList.contains('qa-answer-input');
+          const hasContent = Array.from(qaInputs).some(t => t.value.trim().length > 0);
+          if (hasFocus || hasContent) {
+            loadLeaderboard();
+            loadActivity();
+            return;
+          }
+        }
+      }
       loadPitches();
       loadLeaderboard();
       loadActivity();
