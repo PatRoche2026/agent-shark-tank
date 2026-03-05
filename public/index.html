@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Agent Shark Tank</title>
+  <title>🦈 Agent Shark Tank — Pitch. Get Roasted. Get Funded.</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#x1F988;</text></svg>">
   <style>
     :root {
@@ -749,6 +749,132 @@
       color: var(--danger);
     }
 
+    /* ========================================
+       FUN ANIMATIONS
+       ======================================== */
+
+    /* --- Shark Chase Banner --- */
+    .shark-chase-banner {
+      width: 100%;
+      height: 40px;
+      background: #0a0a1a;
+      overflow: hidden;
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+    }
+    .chase-row {
+      white-space: nowrap;
+      font-size: 1.1em;
+      line-height: 20px;
+      height: 20px;
+      position: relative;
+    }
+    .chase-row .chase-content {
+      display: inline-block;
+      position: absolute;
+    }
+    .chase-row.row-left .chase-content {
+      animation: chaseLeft 15s linear infinite;
+    }
+    .chase-row.row-right .chase-content {
+      animation: chaseRight 15s linear infinite;
+    }
+    @keyframes chaseLeft {
+      0%   { transform: translateX(100vw); }
+      100% { transform: translateX(-300px); }
+    }
+    @keyframes chaseRight {
+      0%   { transform: translateX(-300px); }
+      100% { transform: translateX(100vw); }
+    }
+
+    /* --- Floating Money --- */
+    #panel-pitches {
+      position: relative;
+      overflow: hidden;
+    }
+    .floating-money {
+      position: absolute;
+      font-size: 1.5em;
+      opacity: 0.07;
+      pointer-events: none;
+      z-index: 0;
+    }
+    .floating-money:nth-child(1) { left: 5%;  animation: floatUp 12s 0s linear infinite; }
+    .floating-money:nth-child(2) { left: 20%; animation: floatUp 16s 3s linear infinite; }
+    .floating-money:nth-child(3) { left: 40%; animation: floatUp 10s 1s linear infinite; }
+    .floating-money:nth-child(4) { left: 60%; animation: floatUp 18s 5s linear infinite; }
+    .floating-money:nth-child(5) { left: 75%; animation: floatUp 14s 2s linear infinite; }
+    .floating-money:nth-child(6) { left: 90%; animation: floatUp 20s 4s linear infinite; }
+    @keyframes floatUp {
+      0%   { transform: translateY(100vh) rotate(0deg); opacity: 0; }
+      10%  { opacity: 0.07; }
+      90%  { opacity: 0.07; }
+      100% { transform: translateY(-100px) rotate(360deg); opacity: 0; }
+    }
+
+    /* --- Deal Confetti --- */
+    .deal-badge.deal {
+      position: relative;
+    }
+    .pitch-card.expanded .deal-badge.deal::after {
+      content: '';
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: 4px;
+      height: 4px;
+      border-radius: 50%;
+      background: transparent;
+      animation: confettiBurst 1.5s ease-out forwards;
+      pointer-events: none;
+    }
+    @keyframes confettiBurst {
+      0% {
+        box-shadow:
+          0 0 0 0 var(--success),
+          0 0 0 0 var(--dj),
+          0 0 0 0 var(--success),
+          0 0 0 0 var(--dj),
+          0 0 0 0 var(--success),
+          0 0 0 0 var(--dj),
+          0 0 0 0 var(--success),
+          0 0 0 0 var(--dj);
+        opacity: 1;
+      }
+      100% {
+        box-shadow:
+          -15px -20px 0 -1px var(--success),
+          20px -15px 0 -1px var(--dj),
+          -25px 5px 0 -1px var(--success),
+          18px 12px 0 -1px var(--dj),
+          -8px -25px 0 -1px var(--success),
+          25px -5px 0 -1px var(--dj),
+          -20px 18px 0 -1px var(--success),
+          10px 22px 0 -1px var(--dj);
+        opacity: 0;
+      }
+    }
+
+    /* --- Shark Fin --- */
+    .shark-fin {
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      font-size: 2em;
+      z-index: 999;
+      cursor: default;
+      animation: bobUp 3s ease-in-out infinite;
+      filter: drop-shadow(0 2px 8px rgba(0,0,0,0.5));
+      user-select: none;
+    }
+    @keyframes bobUp {
+      0%, 100% { transform: translateY(0); }
+      50%      { transform: translateY(-10px); }
+    }
+
     @media (max-width: 900px) {
       .main { flex-direction: column; }
       .sidebar { width: 100%; }
@@ -757,6 +883,16 @@
   </style>
 </head>
 <body>
+
+  <!-- Shark Chase Banner -->
+  <div class="shark-chase-banner">
+    <div class="chase-row row-left">
+      <span class="chase-content">💼💼💼 &nbsp;&nbsp;&nbsp;&nbsp; 🦈</span>
+    </div>
+    <div class="chase-row row-right">
+      <span class="chase-content">🦈 &nbsp;&nbsp;&nbsp;&nbsp; 💰💰💰</span>
+    </div>
+  </div>
 
   <!-- Header -->
   <div class="header">
@@ -785,6 +921,12 @@
     <div class="content">
       <!-- Pitches Tab -->
       <div class="tab-panel active" id="panel-pitches">
+        <span class="floating-money">💵</span>
+        <span class="floating-money">💵</span>
+        <span class="floating-money">💵</span>
+        <span class="floating-money">💵</span>
+        <span class="floating-money">💵</span>
+        <span class="floating-money">💵</span>
         <div id="pitchesList">Loading pitches...</div>
       </div>
 
@@ -1567,5 +1709,7 @@ curl -X POST /api/pitch \<br>
     // Auto-poll every 10 seconds
     setInterval(refreshAll, 10000);
   </script>
+  <!-- Shark Fin -->
+  <div class="shark-fin" title="The Sharks are always watching...">🦈</div>
 </body>
 </html>
